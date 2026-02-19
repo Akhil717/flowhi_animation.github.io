@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>JARVIS • Time Vortex Retrieval</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-deep: #020408;
+      --holo-blue: #00f3ff;
+      --holo-text: #d8eaff;
+      --alert: #ff2a2a; /* Red for scanning/alert */
+      --glass: rgba(0, 243, 255, 0.05);
+      --border: rgba(0, 243, 255, 0.3);
+    }
+    
+    * { box-sizing: border-box; }
+    
+    body { 
+      margin: 0; overflow: hidden; background: var(--bg-deep); 
+      color: var(--holo-text); 
+      font-family: 'Rajdhani', sans-serif; 
+    }
+
+    /* --- HUD UI --- */
+    .hud {
+      position: fixed; inset: 0 0 auto 0; display: flex; gap: 20px; padding: 20px 30px;
+      background: linear-gradient(180deg, rgba(2,4,8,0.9), transparent);
+      z-index: 10; align-items: center; pointer-events: none;
+    }
+    
+    .brand { 
+      font-family: 'Share Tech Mono', monospace; font-size: 24px; color: var(--holo-blue);
+      text-shadow: 0 0 10px var(--holo-blue); letter-spacing: 2px;
+    }
+    
+    .state-display {
+      margin-left: auto; font-family: 'Share Tech Mono', monospace; font-size: 14px;
+      color: rgba(0, 243, 255, 0.7); border: 1px solid var(--border);
+      padding: 5px 15px; background: rgba(0, 243, 255, 0.05);
+    }
+
+    /* --- CONTROLS --- */
+    .controls {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 12px; z-index: 10;
+    }
+
+    button {
+      background: rgba(2, 10, 20, 0.85);
+      color: var(--holo-blue);
+      border: 1px solid var(--border);
+      padding: 12px 20px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px; text-transform: uppercase; letter-spacing: 1px;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: all 0.2s ease;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+    }
+
+    button:hover {
+      background: rgba(0, 243, 255, 0.15);
+      box-shadow: 0 0 20px rgba(0, 243, 255, 0.4);
+      border-color: var(--holo-blue);
+      transform: translateY(-2px);
+    }
+
+    /* --- FOUND OVERLAY --- */
+    .found-badge {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      pointer-events: none; text-align: center; display: none; z-index: 20;
+    }
+    .found-text {
+      font-family: 'Share Tech Mono', monospace; font-size: 24px; color: var(--holo-blue);
+      text-shadow: 0 0 20px var(--holo-blue); margin-top: 220px; /* Push text below the 3D card */
+      opacity: 0; animation: fadeIn 1s forwards 0.5s;
+    }
+
+    @keyframes fadeIn { to { opacity: 1; } }
+
+  </style>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div class="hud">
+    <div class="brand">Flow-HI</div>
+    <div class="state-display" id="stateReadout">SYSTEM: IDLE</div>
+  </div>
+
+  <div id="foundBadge" class="found-badge">
+    <div class="found-text">Document Found: MATCH 99.9%</div>
+  </div>
+
+  <div id="stage"></div>
+
+  <div class="controls">
+    <button id="btnListen">🎤 Listen</button>
+    <button id="btnAssemble">♾️ Ingest</button>
+    <button id="btnScan">🔎 Scan</button>
+    <button id="btnFound">✅ Found</button>
+    <button id="btnReset">⟲ Reset</button>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    // --- 1. SETUP ---
+    const stage = document.getElementById('stage');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x020408, 0.035);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 3, 9);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ReinhardToneMapping;
+    stage.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.5;
+    controls.maxDistance = 25;
+
+    // --- 2. POST PROCESSING ---
+    const renderScene = new RenderPass(scene, camera);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+    bloomPass.strength = 1.8;
+    bloomPass.radius = 0.4;
+    bloomPass.threshold = 0.15;
+
+    const composer = new EffectComposer(renderer);
+    composer.addPass(renderScene);
+    composer.addPass(bloomPass);
+
+    // --- 3. GEOMETRY (THE VORTEX) ---
+    function getMobiusPoint(u, v, target) {
+        const t = u * Math.PI * 2;
+        const R = 3.5; 
+        const x = (R + v * 0.8 * Math.cos(t / 2)) * Math.cos(t);
+        const y = (R + v * 0.8 * Math.cos(t / 2)) * Math.sin(t);
+        const z = v * 0.8 * Math.sin(t / 2);
+        target.set(x, z, y); 
+    }
+
+    // Wireframe Mesh
+    const segmentCount = 150;
+    const widthCount = 20;
+    const geom = new THREE.PlaneGeometry(1, 1, segmentCount, widthCount);
+    const posAttribute = geom.attributes.position;
+    const uvAttribute = geom.attributes.uv;
+    const tmpVec = new THREE.Vector3();
+    
+    for (let i = 0; i < posAttribute.count; i++) {
+        const u = uvAttribute.getX(i); 
+        const v = uvAttribute.getY(i) * 2 - 1; 
+        getMobiusPoint(u, v, tmpVec);
+        posAttribute.setXYZ(i, tmpVec.x, tmpVec.y, tmpVec.z);
+    }
+    geom.computeVertexNormals();
+    const matWire = new THREE.MeshBasicMaterial({ 
+        color: 0x00f3ff, wireframe: true, transparent: true, opacity: 0.15, side: THREE.DoubleSide
+    });
+    const mobiusMesh = new THREE.Mesh(geom, matWire);
+    scene.add(mobiusMesh);
+
+    // --- 4. PARTICLES (DATA POINTS) ---
+    const pCount = 800;
+    const pGeo = new THREE.BufferGeometry();
+    const pPos = new Float32Array(pCount * 3);
+    const pTarget = new Float32Array(pCount * 3);
+    const pScatter = new Float32Array(pCount * 3);
+    const pColor = new Float32Array(pCount * 3); 
+    
+    const colorBlue = new THREE.Color(0x00f3ff);
+    const colorRed = new THREE.Color(0xff2a2a);
+
+    for(let i=0; i<pCount; i++) {
+        // Target (Mobius)
+        const u = Math.random();
+        const v = (Math.random() * 2 - 1) * 0.8;
+        getMobiusPoint(u, v, tmpVec);
+        pTarget[i*3] = tmpVec.x;
+        pTarget[i*3+1] = tmpVec.y;
+        pTarget[i*3+2] = tmpVec.z;
+
+        // Scatter (Random Cloud)
+        pScatter[i*3] = (Math.random() - 0.5) * 20;
+        pScatter[i*3+1] = (Math.random() - 0.5) * 20;
+        pScatter[i*3+2] = (Math.random() - 0.5) * 20;
+
+        // Initial Pos = Target
+        pPos[i*3] = pTarget[i*3];
+        pPos[i*3+1] = pTarget[i*3+1];
+        pPos[i*3+2] = pTarget[i*3+2];
+
+        // Init color to blue
+        pColor[i*3] = colorBlue.r;
+        pColor[i*3+1] = colorBlue.g;
+        pColor[i*3+2] = colorBlue.b;
+    }
+
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    pGeo.setAttribute('target', new THREE.BufferAttribute(pTarget, 3)); // Store target permanently
+    pGeo.setAttribute('scatter', new THREE.BufferAttribute(pScatter, 3)); // Store scatter permanently
+    pGeo.setAttribute('color', new THREE.BufferAttribute(pColor, 3));
+
+    const pMat = new THREE.PointsMaterial({
+        size: 0.08, vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending
+    });
+    const particles = new THREE.Points(pGeo, pMat);
+    scene.add(particles);
+
+    // --- 5. SCANNER (INVISIBLE BUT ACTIVE) ---
+    const scanner = new THREE.Mesh(
+        new THREE.SphereGeometry(0.1, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    // Note: We DO NOT add scanner to scene, so it is invisible. 
+    // We only use its coordinate logic.
+
+    // --- 6. FOUND CARD (Procedural Texture) ---
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    
+    // Background
+    ctx.fillStyle = "rgba(0, 20, 40, 0.8)";
+    ctx.fillRect(0, 0, 512, 512);
+    // Grid
+    ctx.strokeStyle = "rgba(0, 243, 255, 0.3)";
+    ctx.lineWidth = 2;
+    for(let i=0; i<512; i+=40) {
+        ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,512); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(512,i); ctx.stroke();
+    }
+    // Face Circle
+    ctx.beginPath();
+    ctx.arc(256, 200, 100, 0, Math.PI*2);
+    ctx.strokeStyle = "#00f3ff"; ctx.lineWidth = 8; ctx.stroke();
+    // Eyes
+    ctx.fillStyle = "#00f3ff";
+    ctx.fillRect(210, 180, 20, 10); ctx.fillRect(280, 180, 20, 10);
+    // Text
+    ctx.font = "40px Monospace"; ctx.fillStyle = "#ffffff"; ctx.fillText("TARGET: ALPHA", 90, 380);
+    ctx.font = "20px Monospace"; ctx.fillStyle = "#00f3ff"; ctx.fillText("ID: 894-XJ-99", 180, 420);
+
+    const cardTexture = new THREE.CanvasTexture(canvas);
+    
+    const foundCard = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 2),
+        new THREE.MeshBasicMaterial({ 
+            map: cardTexture, 
+            transparent: true, 
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending 
+        })
+    );
+    scene.add(foundCard);
+    foundCard.visible = false;
+
+
+    // --- 7. STATE LOGIC ---
+    const State = { IDLE: 'IDLE', LISTEN: 'LISTEN', ASSEMBLE: 'ASSEMBLE', SCAN: 'SCAN', FOUND: 'FOUND' };
+    let currentState = State.IDLE;
+    let stateTimer = 0;
+    
+    const uiState = document.getElementById('stateReadout');
+    const uiBadge = document.getElementById('foundBadge');
+
+    function setState(newState) {
+        currentState = newState;
+        stateTimer = 0;
+        uiState.textContent = `SYSTEM: ${newState}`;
+        uiBadge.style.display = 'none';
+        
+        foundCard.visible = false;
+        mobiusMesh.material.opacity = 0.15;
+        
+        // --- ASSEMBLE LOGIC FIX ---
+        if(newState === State.ASSEMBLE) {
+            // Instant Scatter: Force all particles to their scattered positions
+            const positions = particles.geometry.attributes.position.array;
+            const scatters = particles.geometry.attributes.scatter.array;
+            for(let i=0; i<pCount; i++) {
+                positions[i*3] = scatters[i*3];
+                positions[i*3+1] = scatters[i*3+1];
+                positions[i*3+2] = scatters[i*3+2];
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+        }
+        
+        // --- SCAN LOGIC ---
+        if(newState === State.SCAN) {
+             // Reset colors just in case
+        }
+        
+        // --- FOUND LOGIC ---
+        if(newState === State.FOUND) {
+            uiBadge.style.display = 'block';
+            foundCard.visible = true;
+            if (scanner.position.lengthSq() > 0) foundCard.position.copy(scanner.position);
+            else foundCard.position.set(0,0,0);
+            
+            foundCard.scale.set(0,0,0); 
+        }
+    }
+
+    // BUTTONS
+    document.getElementById('btnListen').onclick = () => setState(State.LISTEN);
+    document.getElementById('btnAssemble').onclick = () => setState(State.ASSEMBLE);
+    document.getElementById('btnScan').onclick = () => setState(State.SCAN);
+    document.getElementById('btnFound').onclick = () => setState(State.FOUND);
+    document.getElementById('btnReset').onclick = () => setState(State.IDLE);
+
+
+    // --- 8. ANIMATION LOOP ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const dt = clock.getDelta();
+        const t = clock.getElapsedTime();
+        stateTimer += dt;
+
+        controls.update();
+
+        // 1. GLOBAL ROTATION
+        if(currentState !== State.FOUND) {
+            mobiusMesh.rotation.y += 0.05 * dt;
+            particles.rotation.y += 0.05 * dt;
+        }
+
+        const positions = particles.geometry.attributes.position.array;
+        const colors = particles.geometry.attributes.color.array;
+
+        // --- ASSEMBLING LOGIC (Corrected) ---
+        if (currentState === State.ASSEMBLE) {
+            // Lerp from Current(Scatter) -> Target
+            const targets = particles.geometry.attributes.target.array;
+            const scatters = particles.geometry.attributes.scatter.array;
+            
+            // 2.5 seconds duration
+            const duration = 2.5;
+            const progress = Math.min(stateTimer / duration, 1);
+            
+            // Cubic Ease Out: Starts fast, slows down at end
+            const ease = 1 - Math.pow(1 - progress, 3);
+
+            for(let i=0; i<pCount; i++) {
+                const ix = i*3;
+                // Interpolate between SCATTER and TARGET
+                positions[ix] = scatters[ix] + (targets[ix] - scatters[ix]) * ease;
+                positions[ix+1] = scatters[ix+1] + (targets[ix+1] - scatters[ix+1]) * ease;
+                positions[ix+2] = scatters[ix+2] + (targets[ix+2] - scatters[ix+2]) * ease;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+        }
+
+        // --- SCANNING LOGIC (Red Wave, Invisible Mesh) ---
+        if (currentState === State.SCAN) {
+            const scanSpeed = 0.5;
+            const u = (t * scanSpeed) % 1;
+            
+            // Calculate Invisible Scanner Position
+            getMobiusPoint(u, 0, tmpVec); 
+            tmpVec.applyMatrix4(mobiusMesh.matrixWorld); 
+            scanner.position.copy(tmpVec);
+
+            // Red Wave Logic
+            const pWorld = new THREE.Vector3();
+            for(let i=0; i<pCount; i++) {
+                const ix = i*3;
+                pWorld.set(positions[ix], positions[ix+1], positions[ix+2]);
+                pWorld.applyMatrix4(particles.matrixWorld); 
+
+                const dist = pWorld.distanceTo(scanner.position);
+
+                if(dist < 1.2) {
+                    colors[ix] = colorRed.r;
+                    colors[ix+1] = colorRed.g;
+                    colors[ix+2] = colorRed.b;
+                } else {
+                    // Fade back to blue
+                    colors[ix] += (colorBlue.r - colors[ix]) * 0.05;
+                    colors[ix+1] += (colorBlue.g - colors[ix+1]) * 0.05;
+                    colors[ix+2] += (colorBlue.b - colors[ix+2]) * 0.05;
+                }
+            }
+            particles.geometry.attributes.color.needsUpdate = true;
+            bloomPass.strength = 2.5;
+        }
+
+        // --- FOUND LOGIC ---
+        if (currentState === State.FOUND) {
+            const targetPos = new THREE.Vector3(0, 0, 4);
+            targetPos.applyQuaternion(camera.quaternion); 
+            targetPos.add(camera.position); 
+
+            foundCard.position.lerp(targetPos, 0.05);
+            foundCard.lookAt(camera.position);
+            foundCard.scale.lerp(new THREE.Vector3(1,1,1), 0.05);
+
+            bloomPass.strength = 1.2;
+            mobiusMesh.material.opacity = 0.05;
+        }
+
+        // --- LISTEN BREATH ---
+        if (currentState === State.LISTEN) {
+            const s = 1 + Math.sin(t * 4) * 0.05;
+            mobiusMesh.scale.setScalar(s);
+            particles.scale.setScalar(s);
+        }
+
+        composer.render();
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+        composer.setSize(w, h);
+    });
+
+  </script>
+</body>
+</html>
